@@ -1,0 +1,113 @@
+{
+  "//": "ECコンシェルジュの設定例。~/.pi/agent/ec-concierge.json にコピーして使う。",
+
+  "//models": [
+    "用途（ロール）ごとに使うモデルを分ける。",
+    "concierge: ユーザーとの対話（メインモデル。ランチャーが --model に渡す）",
+    "extract  : 商品ページの抽出・要約（安いモデル / ローカルで十分）",
+    "review   : レビュー記事の読解・整理",
+    "translate: 日本語以外のレビューの日本語要約",
+    "rerank   : 要件と候補の突き合わせ採点",
+    "fallback を書くと、上から順に使えるものが選ばれる。",
+    "どれも使えないときは現在のセッションモデルにフォールバックする（fallbackToSessionModel: false で無効化）。"
+  ],
+  "models": {
+    "concierge": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5"
+    },
+    "extract": {
+      "provider": "lan-llama",
+      "model": "qwen3-30b-a3b-instruct",
+      "maxTokens": 1500,
+      "temperature": 0.2,
+      "fallback": [{ "provider": "anthropic", "model": "claude-haiku-4-5" }]
+    },
+    "review": {
+      "provider": "lan-llama",
+      "model": "qwen3-30b-a3b-instruct",
+      "maxTokens": 1500
+    },
+    "translate": {
+      "provider": "lan-llama",
+      "model": "gemma-3-27b-it"
+    },
+    "rerank": {
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "temperature": 0
+    }
+  },
+
+  "//providers": [
+    "pi に追加登録するプロバイダ。LAN内の llama.cpp / Ollama / vLLM などをここに書く。",
+    "llama.cpp のルーターは pi 本体の /login llama.cpp でも設定できるが、",
+    "ここに書いておくとこの拡張だけで完結し、複数マシンを使い分けられる。"
+  ],
+  "providers": {
+    "lan-llama": {
+      "baseUrl": "http://192.168.1.50:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "$LAN_LLAMA_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen3-30b-a3b-instruct",
+          "name": "Qwen3 30B (LAN)",
+          "contextWindow": 65536,
+          "maxTokens": 8192,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        },
+        {
+          "id": "gemma-3-27b-it",
+          "name": "Gemma 3 27B (LAN)",
+          "contextWindow": 32768,
+          "maxTokens": 4096,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  },
+
+  "//search": [
+    "Web検索は pi の実行マシンから発行される（LLM実行マシンではない）。",
+    "backend: auto なら 資格情報のあるものを brave → google-cse → searxng → duckduckgo の順に試す。"
+  ],
+  "search": {
+    "backend": "auto",
+    "maxResults": 8,
+    "brave": { "apiKey": "$BRAVE_SEARCH_API_KEY" },
+    "googleCse": { "apiKey": "$GOOGLE_CSE_API_KEY", "cx": "$GOOGLE_CSE_CX" },
+    "searxng": { "baseUrl": "http://192.168.1.60:8888" }
+  },
+
+  "//ec": [
+    "楽天・Yahoo!は無料の公式APIを使う（アプリIDを取得して環境変数に入れる）。",
+    "それ以外のサイトはサイト指定のWeb検索で辿る。"
+  ],
+  "ec": {
+    "rakuten": {
+      "enabled": true,
+      "applicationId": "$RAKUTEN_APPLICATION_ID",
+      "affiliateId": "$RAKUTEN_AFFILIATE_ID"
+    },
+    "yahoo": {
+      "enabled": true,
+      "appId": "$YAHOO_APP_ID"
+    },
+    "defaultSites": ["rakuten", "yahoo", "amazon", "kakaku", "yodobashi"]
+  },
+
+  "http": {
+    "timeoutMs": 20000,
+    "minIntervalMsPerHost": 1200,
+    "respectRobotsTxt": true
+  },
+
+  "outputDir": "output",
+  "persona": "auto",
+  "summarizeThresholdChars": 6000
+}
