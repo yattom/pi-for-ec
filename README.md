@@ -128,7 +128,14 @@ pi
 - [docs/models.md](docs/models.md) — 用途別モデルの設定（Anthropic API / ローカルLLM）
 - [docs/configuration.md](docs/configuration.md) — 設定ファイルの全項目
 - [docs/data-sources.md](docs/data-sources.md) — 対応ECサイト・レビューサイトと増やし方
+- [docs/windows.md](docs/windows.md) — Windows 11 / WSL2 での動かし方
 - [docs/development.md](docs/development.md) — 開発とテスト
+
+## 動作環境
+
+Node.js 20 以上。Linux / macOS / WSL2 (Ubuntu) / ネイティブ Windows 11 で動きます。
+Windows での作法（設定ファイルの場所、`!command` の書き方、WSL からホストの llama.cpp に繋ぐ方法）は
+[docs/windows.md](docs/windows.md) を参照してください。
 
 ## 開発
 
