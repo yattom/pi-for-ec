@@ -56,15 +56,23 @@ export interface ExtraProviderConfig {
 	models?: Array<{ id: string } & Record<string, unknown>>;
 }
 
-export type SearchBackend = "auto" | "brave" | "google-cse" | "searxng" | "duckduckgo";
+export type SearchBackend = "auto" | "brave" | "tavily" | "serper" | "searxng" | "google-cse" | "duckduckgo";
 
 export interface SearchConfig {
 	backend: SearchBackend;
 	/** 1回の検索で返す最大件数 */
 	maxResults: number;
 	brave: { endpoint: string; apiKey?: string; country: string; searchLang: string; uiLang: string };
-	googleCse: { endpoint: string; apiKey?: string; cx?: string; lr: string; gl: string };
+	/**
+	 * Tavily。APIキー無しでも「キーレスモード」で動く（レート制限あり）ため、
+	 * 何も設定していないときの既定の検索経路になる。
+	 */
+	tavily: { endpoint: string; apiKey?: string; searchDepth: "basic" | "advanced"; country?: string };
+	/** Serper（Google の検索結果を返すAPI）。キー必須。 */
+	serper: { endpoint: string; apiKey?: string; gl: string; hl: string };
 	searxng: { baseUrl?: string; language: string; engines?: string };
+	/** Google Programmable Search。2025年に新規受付終了、2027-01-01 に廃止予定。 */
+	googleCse: { endpoint: string; apiKey?: string; cx?: string; lr: string; gl: string };
 	duckduckgo: { endpoint: string; region: string };
 }
 
@@ -138,6 +146,17 @@ export const DEFAULT_CONFIG: EcConciergeConfig = {
 			country: "JP",
 			searchLang: "jp",
 			uiLang: "ja-JP",
+		},
+		tavily: {
+			endpoint: "https://api.tavily.com/search",
+			apiKey: "$TAVILY_API_KEY",
+			searchDepth: "basic",
+		},
+		serper: {
+			endpoint: "https://google.serper.dev/search",
+			apiKey: "$SERPER_API_KEY",
+			gl: "jp",
+			hl: "ja",
 		},
 		googleCse: {
 			endpoint: "https://www.googleapis.com/customsearch/v1",

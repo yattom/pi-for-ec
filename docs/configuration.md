@@ -62,16 +62,23 @@ Web検索。**すべて pi の実行マシンから発行されます。**
 
 | 項目 | 既定 | 説明 |
 |---|---|---|
-| `backend` | `"auto"` | `auto` / `brave` / `google-cse` / `searxng` / `duckduckgo` |
+| `backend` | `"auto"` | `auto` / `brave` / `tavily` / `serper` / `searxng` / `google-cse` / `duckduckgo` |
 | `maxResults` | `8` | 1回の検索で返す最大件数 |
-| `brave.apiKey` | `"$BRAVE_SEARCH_API_KEY"` | Brave Search API のトークン |
+| `brave.apiKey` | `"$BRAVE_SEARCH_API_KEY"` | Brave Search API のトークン（カード登録が必要） |
 | `brave.country` / `searchLang` / `uiLang` | `JP` / `jp` / `ja-JP` | 日本語検索の既定 |
-| `googleCse.apiKey` / `cx` | `"$GOOGLE_CSE_API_KEY"` / `"$GOOGLE_CSE_CX"` | Google Programmable Search |
+| `tavily.apiKey` | `"$TAVILY_API_KEY"` | Tavily のキー。**未設定でもキーレスモードで動く**（レート制限あり） |
+| `tavily.searchDepth` | `"basic"` | `basic` / `advanced`（advanced は精度が上がるが消費クレジットが増える） |
+| `tavily.country` | 未設定 | `"japan"` などを設定すると地域を絞る |
+| `serper.apiKey` | `"$SERPER_API_KEY"` | Serper のキー |
+| `serper.gl` / `hl` | `jp` / `ja` | Google 検索の地域・言語 |
 | `searxng.baseUrl` | `"$SEARXNG_BASE_URL"` | 自前 SearXNG（JSON API を有効にしておく） |
-| `duckduckgo.region` | `"jp-jp"` | キー不要のフォールバック。ベストエフォート |
+| `googleCse.apiKey` / `cx` | `"$GOOGLE_CSE_API_KEY"` / `"$GOOGLE_CSE_CX"` | Google Programmable Search（新規受付終了・2027-01-01 廃止） |
+| `duckduckgo.region` | `"jp-jp"` | 最後の手段。スクレイピングなのでブロックされやすい |
 
-`auto` のときは資格情報が揃っているものを `brave → google-cse → searxng → duckduckgo` の順に試し、
-失敗したら次へフォールバックします。
+`auto` のときは資格情報が揃っているものを
+`brave → tavily → serper → searxng → google-cse → duckduckgo` の順に試し、失敗したら次へフォールバックします。
+Tavily と DuckDuckGo はキー無しでも候補に入るため、何も設定していなければ Tavily のキーレスモードが使われます。
+どれが実際に動くかは `/ec-search-test` で確認できます。
 
 ### `ec`
 
@@ -139,6 +146,7 @@ Web検索。**すべて pi の実行マシンから発行されます。**
 |---|---|
 | `PI_EC_CONFIG` | 追加で読む設定ファイルのパス |
 | `PI_EC_MODEL_CONCIERGE` など | ロール別モデルの上書き（`provider/model` 形式） |
-| `BRAVE_SEARCH_API_KEY` / `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_CX` / `SEARXNG_BASE_URL` | 検索バックエンド |
+| `TAVILY_API_KEY` / `SERPER_API_KEY` / `BRAVE_SEARCH_API_KEY` / `SEARXNG_BASE_URL` | 検索バックエンド |
+| `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_CX` | Google Programmable Search（廃止予定。既存ユーザー向け） |
 | `RAKUTEN_APPLICATION_ID` / `RAKUTEN_AFFILIATE_ID` / `YAHOO_APP_ID` | ECサイトAPI |
 | `PI_BIN` | ランチャーが起動する pi 実行ファイルのパス |

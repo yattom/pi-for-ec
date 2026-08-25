@@ -62,7 +62,13 @@ describe("拡張の登録内容", () => {
 				"web_search",
 			].sort(),
 		);
-		expect([...commands.keys()].sort()).toEqual(["ec-config", "ec-models", "ec-reload", "ec-status"]);
+		expect([...commands.keys()].sort()).toEqual([
+			"ec-config",
+			"ec-models",
+			"ec-reload",
+			"ec-search-test",
+			"ec-status",
+		]);
 		expect([...events.keys()]).toContain("session_start");
 		expect([...events.keys()]).toContain("before_agent_start");
 	});

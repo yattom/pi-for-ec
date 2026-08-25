@@ -75,13 +75,16 @@
 
   "//search": [
     "Web検索は pi の実行マシンから発行される（LLM実行マシンではない）。",
-    "backend: auto なら 資格情報のあるものを brave → google-cse → searxng → duckduckgo の順に試す。"
+    "backend: auto なら brave → tavily → serper → searxng → google-cse → duckduckgo の順に、使えるものを試す。",
+    "Tavily はキー無しでもキーレスモードで動くが、レート制限が厳しいのでキーの取得を推奨。",
+    "Google Programmable Search は新規受付終了・2027-01-01 廃止のため、新規に選ぶ意味はない。"
   ],
   "search": {
     "backend": "auto",
     "maxResults": 8,
+    "tavily": { "apiKey": "$TAVILY_API_KEY", "searchDepth": "basic" },
+    "serper": { "apiKey": "$SERPER_API_KEY" },
     "brave": { "apiKey": "$BRAVE_SEARCH_API_KEY" },
-    "googleCse": { "apiKey": "$GOOGLE_CSE_API_KEY", "cx": "$GOOGLE_CSE_CX" },
     "searxng": { "baseUrl": "http://192.168.1.60:8888" }
   },
 

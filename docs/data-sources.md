@@ -66,15 +66,39 @@ Amazon の商品情報を API で取りたい場合は Product Advertising API�
 
 ## Web検索バックエンド
 
-| バックエンド | 必要なもの | 備考 |
-|---|---|---|
-| Brave Search API | APIキー | 無料枠あり。日本語・地域指定が効く。既定の第一候補 |
-| Google Programmable Search | APIキー + 検索エンジンID | 1日100クエリまで無料 |
-| SearXNG | 自前インスタンスのURL | JSON API を有効にしておく。社内・自宅ネットワーク向け |
-| DuckDuckGo (HTML) | 不要 | キー無しで動くフォールバック。HTML構造の変更に弱い |
+検索は pi の実行マシンから発行します。`backend: "auto"` なら上から順に「使えるもの」を試し、
+失敗すれば次へ回します。どれが使えるかは `/ec-config`、実際に動くかは `/ec-search-test` で確認できます。
 
-`backend: "auto"` なら上から順に「使えるもの」を試し、失敗すれば次へ回します。
-どれが使えるかは `/ec-config` で確認できます。
+| 優先 | バックエンド | 必要なもの | 備考 |
+|---|---|---|---|
+| 1 | Brave Search API | APIキー（カード登録必須） | 品質は高い。2026年2月に無料枠が終了し、$5/月クレジット（約1,000クエリ）+従量課金 |
+| 2 | **Tavily** | APIキー（無料枠あり・カード不要） | **最も手軽な推奨先。** キー無しでも「キーレスモード」で動く（レート制限あり） |
+| 3 | Serper | APIキー（新規登録に無料枠） | Google の検索結果が返る |
+| 4 | SearXNG | 自前インスタンスのURL | JSON API を有効に。無料で無制限だが自分で運用する |
+| 5 | Google Programmable Search | APIキー + 検索エンジンID | **新規受付終了・2027年1月1日に廃止。** 既存ユーザーの互換目的でのみ残置 |
+| 6 | DuckDuckGo (HTML) | 不要 | 最後の手段。スクレイピングなのでブロックされやすい |
+
+### キーは「任意」ではなく「実質必須」
+
+キーを1つも設定しなくても Tavily のキーレスモードで一応動きますが、レート制限が厳しく、
+連続した調査（`review_research` は1回で複数ページを読む）ではすぐ頭打ちになります。
+`ec_search` の Amazon / 価格.com / ヨドバシもWeb検索経由なので、検索が止まると調査全体が止まります。
+
+**実用するなら Tavily のキー（無料枠・カード不要）を取るのが一番簡単です。**
+
+```bash
+export TAVILY_API_KEY="tvly-..."
+```
+
+### Google Programmable Search からの移行
+
+Google は Custom Search JSON API を2025年に新規受付終了し、2027年1月1日に廃止すると告知しています。
+新しくキーを作ることはできません。Google は Vertex AI Search を移行先として案内していますが、
+これは「自社データを対象にしたエンタープライズ検索」の製品で、汎用Web検索APIの置き換えにはなりません。
+また Gemini の Grounding with Google Search は **LLM側でWeb検索する** 仕組みで、
+「検索は実行マシンから出す」というこの拡張の方針と相容れません。
+
+そのため移行先としては Tavily / Serper / Brave / 自前 SearXNG を推奨します。
 
 ## アクセスのマナー
 

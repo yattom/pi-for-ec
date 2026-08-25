@@ -268,6 +268,38 @@ export class HttpClient {
 		}
 	}
 
+	/** JSON を POST する API 用（Tavily / Serper など）。robots.txt チェックは行わない。 */
+	async postJson<T = unknown>(
+		url: string,
+		payload: unknown,
+		options: { signal?: AbortSignal; headers?: Record<string, string> } = {},
+	): Promise<T> {
+		const host = new URL(url).host;
+		const response = await this.schedule(host, () =>
+			fetch(url, {
+				method: "POST",
+				headers: {
+					"user-agent": this.config.userAgent,
+					"content-type": "application/json",
+					accept: "application/json",
+					...options.headers,
+				},
+				body: JSON.stringify(payload),
+				signal: combineSignals([options.signal, AbortSignal.timeout(this.config.timeoutMs)]),
+			}),
+		);
+		const { body } = await this.readCapped(response);
+		if (!response.ok) {
+			const detail = body.slice(0, 300).replace(/\s+/g, " ");
+			throw new HttpError(`HTTP ${response.status}: ${detail}`, response.status, url);
+		}
+		try {
+			return JSON.parse(body) as T;
+		} catch {
+			throw new HttpError(`JSON として解釈できない応答: ${body.slice(0, 200)}`, response.status, url);
+		}
+	}
+
 	/** POST フォーム（DuckDuckGo HTML など）。 */
 	async postForm(
 		url: string,

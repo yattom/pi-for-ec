@@ -64,15 +64,22 @@ pi install .
 
 ### 3. APIキーを用意する
 
-必須ではありませんが、揃うほど調査の質が上がります。
+**検索APIキーは実質必須です。** キー無しでも Tavily のキーレスモードで動きますが、
+レート制限が厳しく、調査の途中で止まります（EC横断検索もレビュー調査もWeb検索に乗っているため）。
 
 | 用途 | 環境変数 | 取得先 | 無い場合 |
 |---|---|---|---|
 | 会話モデル | `ANTHROPIC_API_KEY` など | 各LLMプロバイダ | pi の `/login` でも可 |
-| Web検索 | `BRAVE_SEARCH_API_KEY` | [Brave Search API](https://brave.com/search/api/) | Google CSE → SearXNG → DuckDuckGo(HTML) の順にフォールバック |
-| Web検索(代替) | `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_CX` | Google Programmable Search | — |
+| **Web検索（推奨）** | `TAVILY_API_KEY` | [Tavily](https://tavily.com/)（無料枠あり・カード不要） | キーレスモードで動くが厳しいレート制限つき |
+| Web検索（代替） | `SERPER_API_KEY` | [Serper](https://serper.dev/)（無料枠あり） | — |
+| Web検索（代替） | `BRAVE_SEARCH_API_KEY` | [Brave Search API](https://brave.com/search/api/)（カード登録必須） | — |
+| Web検索（自前） | `SEARXNG_BASE_URL` | 自前の SearXNG（JSON API を有効に） | — |
 | 楽天市場 | `RAKUTEN_APPLICATION_ID` | [Rakuten Developers](https://webservice.rakuten.co.jp/) （無料） | 楽天は Web検索経由になる |
 | Yahoo!ショッピング | `YAHOO_APP_ID` | [Yahoo!デベロッパーネットワーク](https://developer.yahoo.co.jp/) （無料） | Yahoo!は Web検索経由になる |
+
+> Google Programmable Search（Custom Search JSON API）は2025年に新規受付を終了し、2027年1月1日に廃止されます。
+> 既存キーは `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_CX` で引き続き使えますが、新規の選択肢にはなりません。
+> 詳細と移行先は [docs/data-sources.md](docs/data-sources.md) を参照してください。
 
 ### 4. 設定ファイルを置く
 
@@ -103,6 +110,7 @@ pi
 | `/hikaku <商品A> <商品B>` | 特定の商品どうしを比較する |
 | `/ec-models` | 用途別のモデル割り当てを表示・変更する |
 | `/ec-config` | 検索バックエンドやEC APIの設定状況を表示する |
+| `/ec-search-test [クエリ]` | 検索バックエンドを実際に試して、どれが使えるか確認する |
 | `/ec-status` | 現在の要件メモと候補リストを表示する |
 | `/ec-reload` | 設定ファイルを読み直す |
 

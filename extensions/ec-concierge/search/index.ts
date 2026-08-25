@@ -11,12 +11,33 @@ import {
 	type BackendId,
 	backendAvailability,
 	backendCandidates,
+	hasConfiguredBackend,
 	runBackend,
 } from "./backends.ts";
 import type { SearchQuery, SearchResult } from "./types.ts";
 
 export type { SearchQuery, SearchResult } from "./types.ts";
 export { buildQueryString } from "./types.ts";
+
+export const SEARCH_FAILED_PREFIX = "Web検索に失敗しました（";
+
+/**
+ * 検索が全滅したときに出す案内。
+ * 「キーを設定していないと何も調べられない」状態に気づけるようにする。
+ */
+export function searchSetupHint(availability: Record<BackendId, boolean>): string {
+	if (hasConfiguredBackend(availability)) {
+		return "設定済みの検索バックエンドが応答しませんでした。ネットワークとAPIキーの残量を確認してください（/ec-search-test で個別に試せます）。";
+	}
+	return [
+		"検索APIキーが未設定のため、キー不要の経路（Tavilyキーレス / DuckDuckGo）だけで動いています。これらは制限が厳しく、失敗しやすい経路です。",
+		"次のいずれかを設定してください（詳細は docs/data-sources.md）:",
+		"  - TAVILY_API_KEY … 無料枠あり・カード不要。最も手軽",
+		"  - SERPER_API_KEY … Google の検索結果。無料枠あり",
+		"  - BRAVE_SEARCH_API_KEY … 品質は高いがカード登録が必要",
+		"  - SEARXNG_BASE_URL … 自前の SearXNG を立てるなら無料",
+	].join("\n");
+}
 
 export interface SearchOutcome {
 	results: SearchResult[];
@@ -38,15 +59,19 @@ export class WebSearch {
 		return backendAvailability({ http: this.http, config, resolve: this.resolve });
 	}
 
+	/** 指定したバックエンドだけを実行する（フォールバックしない）。/ec-search-test 用。 */
+	async searchWith(backend: BackendId, query: SearchQuery, signal?: AbortSignal): Promise<SearchResult[]> {
+		const config = this.getConfig();
+		return runBackend(backend, query, { http: this.http, config, resolve: this.resolve, signal });
+	}
+
 	async search(query: SearchQuery, signal?: AbortSignal): Promise<SearchOutcome> {
 		const config = this.getConfig();
 		const deps: BackendDeps = { http: this.http, config, resolve: this.resolve, signal };
 		const availability = await backendAvailability(deps);
 		const candidates = backendCandidates(config.backend, availability);
 		if (candidates.length === 0) {
-			throw new Error(
-				"利用できる検索バックエンドがありません。BRAVE_SEARCH_API_KEY などを設定するか、search.backend を指定してください。",
-			);
+			throw new Error(`利用できる検索バックエンドがありません。\n${searchSetupHint(availability)}`);
 		}
 
 		const attempts: SearchOutcome["attempts"] = [];
@@ -68,7 +93,7 @@ export class WebSearch {
 		}
 
 		const detail = attempts.map((attempt) => `${attempt.backend}: ${attempt.error}`).join(" / ");
-		throw new Error(`Web検索に失敗しました (${detail})`);
+		throw new Error(`${SEARCH_FAILED_PREFIX}${detail}）\n${searchSetupHint(availability)}`);
 	}
 
 	/** 複数クエリをまとめて投げ、URL 重複を除いて返す。 */

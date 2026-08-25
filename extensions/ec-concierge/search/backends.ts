@@ -2,7 +2,8 @@
  * Web検索バックエンド。
  *
  * すべて pi 実行マシンから HTTP を発行する。LLM プロバイダ側の検索ツールは使わない。
- * 優先度: Brave Search API > Google Programmable Search > 自前の SearXNG > DuckDuckGo(HTML)
+ * 優先度: Brave > Tavily > Serper > 自前の SearXNG > Google Programmable Search(廃止予定) > DuckDuckGo(HTML)
+ * Tavily はキー無しでも「キーレスモード」で動くので、何も設定していないときの既定経路になる。
  */
 
 import type { SearchConfig } from "../config.ts";
@@ -54,6 +55,93 @@ async function braveSearch(query: SearchQuery, deps: BackendDeps): Promise<Searc
 		headers: { "x-subscription-token": apiKey, accept: "application/json" },
 	});
 	return parseBraveResponse(payload);
+}
+
+/* ----------------------------------------------------------------- Tavily */
+
+interface TavilyResponse {
+	results?: Array<{ title?: string; url?: string; content?: string; published_date?: string }>;
+}
+
+export function parseTavilyResponse(payload: unknown): SearchResult[] {
+	const results = (payload as TavilyResponse)?.results;
+	if (!Array.isArray(results)) return [];
+	return results
+		.filter((item) => typeof item?.url === "string")
+		.map((item) => ({
+			title: item.title ?? item.url!,
+			url: stripTrackingParams(item.url!),
+			snippet: (item.content ?? "").replace(/\s+/g, " "),
+			backend: "tavily",
+			published: item.published_date,
+		}));
+}
+
+/**
+ * Tavily の検索リクエストを組み立てる。
+ * サイト制限は `site:` 演算子ではなく include_domains で渡せるので、絞り込みが正確になる。
+ */
+export function buildTavilyRequest(query: SearchQuery, config: SearchConfig): Record<string, unknown> {
+	const body: Record<string, unknown> = {
+		query: query.query,
+		max_results: Math.min(query.count ?? config.maxResults, 20),
+		search_depth: config.tavily.searchDepth,
+		topic: "general",
+	};
+	if (query.sites?.length) body.include_domains = query.sites;
+	if (query.lang !== "any" && config.tavily.country) body.country = config.tavily.country;
+	return body;
+}
+
+async function tavilySearch(query: SearchQuery, deps: BackendDeps): Promise<SearchResult[]> {
+	const apiKey = await deps.resolve(deps.config.tavily.apiKey);
+	// キーが無い場合は Tavily 公式の「キーレスモード」を使う（レート制限あり）
+	const headers: Record<string, string> = apiKey
+		? { authorization: `Bearer ${apiKey}` }
+		: { "x-tavily-access-mode": "keyless", "x-client-source": "pi-ec-concierge-keyless" };
+	const payload = await deps.http.postJson(deps.config.tavily.endpoint, buildTavilyRequest(query, deps.config), {
+		signal: deps.signal,
+		headers,
+	});
+	return parseTavilyResponse(payload);
+}
+
+/* ----------------------------------------------------------------- Serper */
+
+interface SerperResponse {
+	organic?: Array<{ title?: string; link?: string; snippet?: string; date?: string }>;
+}
+
+export function parseSerperResponse(payload: unknown): SearchResult[] {
+	const organic = (payload as SerperResponse)?.organic;
+	if (!Array.isArray(organic)) return [];
+	return organic
+		.filter((item) => typeof item?.link === "string")
+		.map((item) => ({
+			title: item.title ?? item.link!,
+			url: stripTrackingParams(item.link!),
+			snippet: item.snippet ?? "",
+			backend: "serper",
+			published: item.date,
+		}));
+}
+
+async function serperSearch(query: SearchQuery, deps: BackendDeps): Promise<SearchResult[]> {
+	const apiKey = await deps.resolve(deps.config.serper.apiKey);
+	if (!apiKey) throw new Error("Serper の API キーが未設定です");
+	const body: Record<string, unknown> = {
+		q: buildQueryString(query),
+		num: Math.min(query.count ?? deps.config.maxResults, 20),
+	};
+	if (query.lang !== "any") {
+		body.gl = deps.config.serper.gl;
+		body.hl = deps.config.serper.hl;
+	}
+	const payload = await deps.http.postJson(deps.config.serper.endpoint, body, {
+		signal: deps.signal,
+		headers: { "x-api-key": apiKey },
+	});
+	return parseSerperResponse(payload);
 }
 
 /* ------------------------------------------------- Google Programmable Search */
@@ -183,31 +271,47 @@ async function duckDuckGoSearch(query: SearchQuery, deps: BackendDeps): Promise<
 
 /* ------------------------------------------------------------- ディスパッチ */
 
-export type BackendId = "brave" | "google-cse" | "searxng" | "duckduckgo";
+export type BackendId = "brave" | "tavily" | "serper" | "searxng" | "google-cse" | "duckduckgo";
 
-export const BACKEND_ORDER: BackendId[] = ["brave", "google-cse", "searxng", "duckduckgo"];
+/**
+ * auto のときに試す順序。
+ * キーが要るものを先に、キー無しでも動くもの（Tavily キーレス、DuckDuckGo）を後ろに置く。
+ * Google Programmable Search は 2025年に新規受付を終了し 2027-01-01 に廃止されるため、
+ * 既存ユーザー向けの互換目的で末尾寄りに残している。
+ */
+export const BACKEND_ORDER: BackendId[] = ["brave", "tavily", "serper", "searxng", "google-cse", "duckduckgo"];
 
 const BACKENDS: Record<BackendId, (query: SearchQuery, deps: BackendDeps) => Promise<SearchResult[]>> = {
 	brave: braveSearch,
-	"google-cse": googleCseSearch,
+	tavily: tavilySearch,
+	serper: serperSearch,
 	searxng: searxngSearch,
+	"google-cse": googleCseSearch,
 	duckduckgo: duckDuckGoSearch,
 };
 
 /** 各バックエンドが使える状態か（資格情報が揃っているか）を調べる。 */
 export async function backendAvailability(deps: BackendDeps): Promise<Record<BackendId, boolean>> {
-	const [braveKey, googleKey, googleCx, searxngUrl] = await Promise.all([
+	const [braveKey, serperKey, googleKey, googleCx, searxngUrl] = await Promise.all([
 		deps.resolve(deps.config.brave.apiKey),
+		deps.resolve(deps.config.serper.apiKey),
 		deps.resolve(deps.config.googleCse.apiKey),
 		deps.resolve(deps.config.googleCse.cx),
 		deps.resolve(deps.config.searxng.baseUrl),
 	]);
 	return {
 		brave: Boolean(braveKey),
-		"google-cse": Boolean(googleKey && googleCx),
+		tavily: true, // キーが無くてもキーレスモードで動く（レート制限あり）
+		serper: Boolean(serperKey),
 		searxng: Boolean(searxngUrl),
-		duckduckgo: true, // キー不要。ただしベストエフォート
+		"google-cse": Boolean(googleKey && googleCx),
+		duckduckgo: true, // キー不要。ただしスクレイピングでベストエフォート
 	};
+}
+
+/** 資格情報を設定済みのバックエンド（キーレス頼みでないもの）があるか。 */
+export function hasConfiguredBackend(availability: Record<BackendId, boolean>): boolean {
+	return BACKEND_ORDER.some((id) => id !== "tavily" && id !== "duckduckgo" && availability[id]);
 }
 
 /** 実際に使うバックエンドの順序を決める。 */

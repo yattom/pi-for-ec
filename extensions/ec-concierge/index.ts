@@ -3,7 +3,7 @@
  *
  * - ツール: ask_user / web_search / web_fetch / ec_search / review_research /
  *           requirements / candidates / rank_candidates / recommend
- * - コマンド: /ec-models /ec-config /ec-status /ec-reload
+ * - コマンド: /ec-models /ec-config /ec-search-test /ec-status /ec-reload
  *
  * 設計メモ:
  *  - Web検索とページ取得は pi 実行マシンから発行する（LLM 側の検索機能は使わない）。
@@ -32,6 +32,8 @@ import { createRecommendTool } from "./tools/recommend.ts";
 import { createReviewResearchTool } from "./tools/review-research.ts";
 import { createCandidatesTool, createRequirementsTool } from "./tools/state-tools.ts";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web.ts";
+import { BACKEND_ORDER, hasConfiguredBackend } from "./search/backends.ts";
+import { searchSetupHint } from "./search/index.ts";
 import { formatCandidates, formatRequirements } from "./state.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -157,6 +159,9 @@ export default function ecConcierge(pi: ExtensionAPI) {
 					"■ Web検索（実行マシンから発行）",
 					`- 設定: ${config.search.backend}`,
 					...Object.entries(availability).map(([id, ok]) => `- ${id}: ${ok ? "利用可" : "資格情報なし"}`),
+					...(hasConfiguredBackend(availability)
+						? []
+						: ["", "! 検索APIキーが未設定です。キー不要の経路だけで動くため失敗しやすい状態です。", searchSetupHint(availability)]),
 					"",
 					"■ ECサイト",
 					`- 楽天API: ${config.ec.rakuten.enabled ? maskSecret(config.ec.rakuten.applicationId) : "無効"}`,
@@ -173,6 +178,38 @@ export default function ecConcierge(pi: ExtensionAPI) {
 				].join("\n"),
 				"info",
 			);
+		},
+	});
+
+	pi.registerCommand("ec-search-test", {
+		description: "検索バックエンドを実際に1件ずつ試して、どれが使えるか確認する",
+		handler: async (args, ctx) => {
+			const query = args.trim() || "空気清浄機 おすすめ";
+			const availability = await services.search.availability();
+			ctx.ui.notify(`検索テスト中… クエリ: ${query}`, "info");
+
+			const lines: string[] = [`■ 検索テスト（クエリ: ${query}）`];
+			for (const backend of BACKEND_ORDER) {
+				if (!availability[backend]) {
+					lines.push(`- ${backend}: スキップ（資格情報なし）`);
+					continue;
+				}
+				const startedAt = Date.now();
+				try {
+					// フォールバックさせず、そのバックエンドだけを試す
+					const results = await services.search.searchWith(backend, { query, count: 3, lang: "ja" }, ctx.signal);
+					const elapsed = Date.now() - startedAt;
+					lines.push(
+						results.length > 0
+							? `- ${backend}: OK ${results.length}件 (${elapsed}ms) 例: ${results[0]?.url ?? ""}`
+							: `- ${backend}: NG 結果0件 (${elapsed}ms)`,
+					);
+				} catch (error) {
+					lines.push(`- ${backend}: NG ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+				}
+			}
+			if (!hasConfiguredBackend(availability)) lines.push("", searchSetupHint(availability));
+			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
 

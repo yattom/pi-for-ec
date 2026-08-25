@@ -3,6 +3,10 @@ import { DEFAULT_CONFIG } from "../extensions/ec-concierge/config.ts";
 import { HttpClient } from "../extensions/ec-concierge/http.ts";
 import {
 	backendCandidates,
+	buildTavilyRequest,
+	hasConfiguredBackend,
+	parseSerperResponse,
+	parseTavilyResponse,
 	parseBraveResponse,
 	parseDuckDuckGoHtml,
 	parseGoogleCseResponse,
@@ -63,10 +67,65 @@ describe("バックエンドのレスポンス解析", () => {
 		expect(results[0]).toMatchObject({ backend: "searxng", published: "2026-01-01" });
 	});
 
+	it("Tavily", () => {
+		const results = parseTavilyResponse({
+			results: [
+				{
+					title: "空気清浄機のおすすめ",
+					url: "https://my-best.com/1?utm_source=x",
+					content: "検証しました\n改行あり",
+					published_date: "2026-03-01",
+				},
+				{ title: "URLなし" },
+			],
+		});
+		expect(results).toEqual([
+			{
+				title: "空気清浄機のおすすめ",
+				url: "https://my-best.com/1",
+				snippet: "検証しました 改行あり",
+				backend: "tavily",
+				published: "2026-03-01",
+			},
+		]);
+	});
+
+	it("Serper", () => {
+		const results = parseSerperResponse({
+			organic: [{ title: "T", link: "https://kakaku.com/item/1", snippet: "最安 39,800円", date: "2026-01-01" }],
+		});
+		expect(results[0]).toMatchObject({ url: "https://kakaku.com/item/1", backend: "serper", published: "2026-01-01" });
+	});
+
 	it("想定外の形でも落ちない", () => {
 		expect(parseBraveResponse(null)).toEqual([]);
 		expect(parseGoogleCseResponse({})).toEqual([]);
 		expect(parseSearxngResponse({ results: "bad" })).toEqual([]);
+		expect(parseTavilyResponse({ results: null })).toEqual([]);
+		expect(parseSerperResponse({ error: "invalid key" })).toEqual([]);
+	});
+});
+
+describe("buildTavilyRequest", () => {
+	it("サイト制限は site: ではなく include_domains で渡す", () => {
+		const body = buildTavilyRequest(
+			{ query: "KI-RX50 レビュー", sites: ["kakaku.com", "my-best.com"], count: 5 },
+			DEFAULT_CONFIG.search,
+		);
+		expect(body).toMatchObject({
+			query: "KI-RX50 レビュー",
+			max_results: 5,
+			include_domains: ["kakaku.com", "my-best.com"],
+			topic: "general",
+		});
+		expect(JSON.stringify(body)).not.toContain("site:");
+	});
+
+	it("country は設定されているときだけ送る", () => {
+		expect(buildTavilyRequest({ query: "x" }, DEFAULT_CONFIG.search)).not.toHaveProperty("country");
+		expect(
+			buildTavilyRequest({ query: "x" }, { ...DEFAULT_CONFIG.search, tavily: { ...DEFAULT_CONFIG.search.tavily, country: "japan" } }),
+		).toMatchObject({ country: "japan" });
 	});
 });
 
@@ -102,15 +161,28 @@ describe("DuckDuckGo HTML の解析", () => {
 	});
 });
 
-describe("backendCandidates", () => {
-	const availability = { brave: false, "google-cse": true, searxng: true, duckduckgo: true };
+describe("backendCandidates / hasConfiguredBackend", () => {
+	const availability = {
+		brave: false,
+		tavily: true,
+		serper: false,
+		searxng: true,
+		"google-cse": true,
+		duckduckgo: true,
+	};
 
 	it("auto なら使えるものを優先順に並べる", () => {
-		expect(backendCandidates("auto", availability)).toEqual(["google-cse", "searxng", "duckduckgo"]);
+		expect(backendCandidates("auto", availability)).toEqual(["tavily", "searxng", "google-cse", "duckduckgo"]);
 	});
 
 	it("明示指定はそのまま使う（資格情報がなくても試す）", () => {
 		expect(backendCandidates("brave", availability)).toEqual(["brave"]);
+	});
+
+	it("キーが要るバックエンドが1つも無い状態を見分ける", () => {
+		const keyless = { brave: false, tavily: true, serper: false, searxng: false, "google-cse": false, duckduckgo: true };
+		expect(hasConfiguredBackend(keyless)).toBe(false);
+		expect(hasConfiguredBackend(availability)).toBe(true);
 	});
 });
 
@@ -144,6 +216,74 @@ describe("WebSearch", () => {
 		expect(outcome.backend).toBe("google-cse");
 		expect(outcome.attempts[0]).toMatchObject({ backend: "brave" });
 		expect(outcome.results).toHaveLength(1);
+		vi.unstubAllGlobals();
+	});
+
+	it("キーが何も無いときは Tavily のキーレスモードを使う", async () => {
+		const requests: Array<{ url: string; init?: RequestInit }> = [];
+		const http = new HttpClient({ ...DEFAULT_CONFIG.http, minIntervalMsPerHost: 0 });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+				requests.push({ url: String(input), init });
+				return new Response(
+					JSON.stringify({ results: [{ title: "T", url: "https://my-best.com/1", content: "内容" }] }),
+					{ status: 200 },
+				);
+			}),
+		);
+		const search = new WebSearch(
+			http,
+			() => DEFAULT_CONFIG.search,
+			async () => undefined, // どのキーも解決できない
+		);
+
+		const outcome = await search.search({ query: "空気清浄機 おすすめ" });
+		expect(outcome.backend).toBe("tavily");
+		expect(outcome.results).toHaveLength(1);
+
+		const headers = requests[0]?.init?.headers as Record<string, string>;
+		expect(requests[0]?.url).toContain("api.tavily.com");
+		expect(headers["x-tavily-access-mode"]).toBe("keyless");
+		expect(headers.authorization).toBeUndefined();
+		vi.unstubAllGlobals();
+	});
+
+	it("キーがあれば Bearer で送る", async () => {
+		const requests: Array<{ init?: RequestInit }> = [];
+		const http = new HttpClient({ ...DEFAULT_CONFIG.http, minIntervalMsPerHost: 0 });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+				requests.push({ init });
+				return new Response(JSON.stringify({ results: [{ title: "T", url: "https://x.test/1" }] }), { status: 200 });
+			}),
+		);
+		const search = new WebSearch(
+			http,
+			() => ({ ...DEFAULT_CONFIG.search, backend: "tavily" as const }),
+			async (value) => (value === "$TAVILY_API_KEY" ? "tvly-key" : undefined),
+		);
+
+		await search.search({ query: "テスト" });
+		const headers = requests[0]?.init?.headers as Record<string, string>;
+		expect(headers.authorization).toBe("Bearer tvly-key");
+		expect(headers["x-tavily-access-mode"]).toBeUndefined();
+		vi.unstubAllGlobals();
+	});
+
+	it("全滅したときのエラーに設定方法の案内を含める", async () => {
+		const http = new HttpClient({ ...DEFAULT_CONFIG.http, minIntervalMsPerHost: 0 });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("rate limited", { status: 429 })),
+		);
+		const search = new WebSearch(
+			http,
+			() => DEFAULT_CONFIG.search,
+			async () => undefined,
+		);
+		await expect(search.search({ query: "テスト" })).rejects.toThrow(/TAVILY_API_KEY/);
 		vi.unstubAllGlobals();
 	});
 
