@@ -131,6 +131,30 @@ describe("normalizeProviderConfig", () => {
 		});
 	});
 
+	it("プロバイダ階層の compat を各モデルへ配る（registerProvider はモデル単位しか見ないため）", () => {
+		const normalized = normalizeProviderConfig({
+			baseUrl: "http://192.168.1.50:5001/v1",
+			api: "openai-completions",
+			compat: { supportsDeveloperRole: false, maxTokensField: "max_tokens" },
+			models: [{ id: "a" }, { id: "b", compat: { maxTokensField: "max_completion_tokens" } }],
+		});
+		expect(normalized.compat).toBeUndefined();
+		expect(normalized.models?.[0]?.compat).toEqual({
+			supportsDeveloperRole: false,
+			maxTokensField: "max_tokens",
+		});
+		// モデル側の指定が勝つ
+		expect(normalized.models?.[1]?.compat).toEqual({
+			supportsDeveloperRole: false,
+			maxTokensField: "max_completion_tokens",
+		});
+	});
+
+	it("compat を書いていなければ compat キーを足さない", () => {
+		const normalized = normalizeProviderConfig({ baseUrl: "http://x/v1", models: [{ id: "a" }] });
+		expect(normalized.models?.[0]).not.toHaveProperty("compat");
+	});
+
 	it("models を持たないプロバイダはそのまま返す", () => {
 		const config = { baseUrl: "https://proxy.example.com" };
 		expect(normalizeProviderConfig(config)).toBe(config);

@@ -53,7 +53,7 @@ pi に追加登録するプロバイダ。キーがプロバイダIDになりま
 | `apiKey` | 秘密情報の記法が使える |
 | `headers` | 追加ヘッダ |
 | `authHeader` | `true` で `Authorization: Bearer <apiKey>` を自動付与 |
-| `compat` | OpenAI 互換サーバ向けの互換フラグ（pi の models.json と同じ） |
+| `compat` | OpenAI 互換サーバ向けの互換フラグ（pi の models.json と同じ）。プロバイダ階層に書くと各モデルへ配られる（モデル側の指定が優先） |
 | `models` | モデル定義の配列。`id` 以外は省略可（既定値で補完される） |
 
 ### `search`

@@ -334,23 +334,33 @@ export async function resolveSecret(
 /**
  * 設定に書かれたプロバイダ定義を pi の ProviderConfig が要求する形に整える。
  *
- * pi の models.json は省略時の既定値を補ってくれるが、拡張から registerProvider() する場合は
- * name / reasoning / input / cost / contextWindow / maxTokens が揃っている必要がある。
- * 設定ファイルには `{"id": "qwen3-30b"}` だけ書けるようにしたいので、ここで補完する。
+ * 1. pi の models.json は省略時の既定値を補ってくれるが、拡張から registerProvider() する場合は
+ *    name / reasoning / input / cost / contextWindow / maxTokens が揃っている必要がある。
+ *    設定ファイルには `{"id": "qwen3-30b"}` だけ書けるようにしたいので、ここで補完する。
+ * 2. registerProvider() の ProviderConfig にはプロバイダ階層の `compat` が無い（models.json にはある）。
+ *    プロバイダ階層に書かれた compat は各モデルへ配る。モデル側の指定が優先。
  */
 export function normalizeProviderConfig(config: ExtraProviderConfig): ExtraProviderConfig {
 	if (!config.models) return config;
+	const { compat: providerCompat, ...rest } = config;
 	return {
-		...config,
-		models: config.models.map((model) => ({
-			name: model.id,
-			reasoning: false,
-			input: ["text"],
-			contextWindow: 128000,
-			maxTokens: 16384,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			...model,
-		})),
+		...rest,
+		models: config.models.map((model) => {
+			const compat =
+				providerCompat || model.compat
+					? { ...providerCompat, ...(model.compat as Record<string, unknown> | undefined) }
+					: undefined;
+			return {
+				name: model.id,
+				reasoning: false,
+				input: ["text"],
+				contextWindow: 128000,
+				maxTokens: 16384,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				...model,
+				...(compat ? { compat } : {}),
+			};
+		}),
 	};
 }
 

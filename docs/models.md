@@ -112,6 +112,107 @@ pi --list-models | grep lan-llama
 pi 本体の `/login llama.cpp` と `/llama` コマンドを使う方法もあります（`LLAMA_BASE_URL` / `LLAMA_API_KEY`）。
 その場合はプロバイダIDが `llamacpp` になるので、`models.<role>.provider` もそれに合わせてください。
 
+## KoboldCpp（LAN内の別マシン）
+
+KoboldCpp も OpenAI 互換エンドポイント（`/v1/chat/completions`, `/v1/models`）を持つので、
+そのまま下働きロールに使えます。
+
+### 1. KoboldCpp 側
+
+```bash
+./koboldcpp --model Qwen3-30B-A3B-Q4_K_M.gguf \
+  --host 0.0.0.0 --port 5001 \
+  --contextsize 32768 \
+  --multiuser 4 \
+  --password "任意の共有シークレット" \
+  --jinja
+```
+
+- `--host 0.0.0.0`（省略時も全インターフェースで待ち受けます）／`--port` の既定は 5001。
+- `--password` を付けると、全テキストエンドポイントで `Authorization: Bearer <password>` が必要になります。
+  LAN に開くなら必ず設定してください。
+- `--multiuser 4` は同時リクエストをキューイング／並列化します。この拡張はレビュー調査などで
+  モデルを連続して呼ぶので、付けておくと待ち時間が減ります。
+- `--jinja` はチャットテンプレート経由のツール呼び出し解析を有効にします。
+  下働きロール（extract/review/translate/rerank）はツールを使わないので不要ですが、
+  **`concierge`（対話本体）に使うなら必須**です（後述）。
+
+### 2. モデルIDを確認する
+
+`/v1/models` が返す ID は `koboldcpp/<モデル名>` の形です。
+
+```bash
+curl http://192.168.1.50:5001/v1/models
+# {"object":"list","data":[{"id":"koboldcpp/Qwen3-30B-A3B-Q4_K_M", ...}]}
+```
+
+単一モデルで動かしている場合、リクエストの `model` 値は実質無視されますが、
+`/v1/models` の値に合わせておくのが確実です。
+
+### 3. `ec-concierge.json`
+
+```json
+{
+  "providers": {
+    "kobold": {
+      "baseUrl": "http://192.168.1.50:5001/v1",
+      "api": "openai-completions",
+      "apiKey": "$KOBOLD_API_KEY",
+      "authHeader": true,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "koboldcpp/Qwen3-30B-A3B-Q4_K_M",
+          "name": "Qwen3 30B (KoboldCpp)",
+          "contextWindow": 32768,
+          "maxTokens": 4096
+        }
+      ]
+    }
+  },
+  "models": {
+    "extract":   { "provider": "kobold", "model": "koboldcpp/Qwen3-30B-A3B-Q4_K_M", "maxTokens": 1500 },
+    "review":    { "provider": "kobold", "model": "koboldcpp/Qwen3-30B-A3B-Q4_K_M", "maxTokens": 1500 },
+    "translate": { "provider": "kobold", "model": "koboldcpp/Qwen3-30B-A3B-Q4_K_M" },
+    "rerank":    { "provider": "kobold", "model": "koboldcpp/Qwen3-30B-A3B-Q4_K_M", "temperature": 0 }
+  }
+}
+```
+
+`--password` を設定していないなら、`apiKey` はダミー文字列で構いません
+（pi は「認証が設定されているモデル」しか使わないため、空にはできません）。
+
+`contextsize` と `contextWindow` は揃えてください。ずれていると、長いページを渡したときに
+pi 側が入らないことに気づけません。
+
+補足:
+
+- **プロバイダ階層の `compat` は各モデルへ自動で配られます。** pi の `registerProvider()` は
+  モデル単位の `compat` しか見ないため、この拡張が展開しています（モデル側の指定が優先）。
+- `supportsDeveloperRole: false` は必須です。KoboldCpp が解釈するロールは
+  system / user / assistant / tool だけで、`developer` ロールを送るとシステムプロンプトの
+  区切りが崩れます。
+- `maxTokensField` は KoboldCpp が `max_tokens` / `max_completion_tokens` の両方を受けるため
+  どちらでも動きます（明示しておくと安全）。
+- トークン数・コスト表示は動きます（KoboldCpp は `stream_options.include_usage` に対応しています）。
+- 動作確認は `/ec-models` で「実際に使われるモデル」を見るのが早いです。
+
+### 対話本体（concierge）に使う場合
+
+pi は対話モデルにツール呼び出しを要求します。KoboldCpp にもツール呼び出し対応はありますが、
+モデルとチャットテンプレート依存です。使うなら:
+
+- `--jinja` を付ける
+- ツール呼び出しに対応したテンプレートを持つモデル（Qwen3、Llama 3.x 系など）を選ぶ
+- それでも 9 個のツールを使い分ける精度はクラウドの上位モデルに劣ります
+
+まずは `extract` / `review` / `translate` / `rerank` をローカルに寄せ、`concierge` はクラウドAPIに
+残す構成を勧めます（これらのロールはツールを使わない単発生成なので、KoboldCpp の得意な使い方です）。
+
 ## Ollama / vLLM / LM Studio
 
 いずれも OpenAI 互換APIなので、`providers` の書き方は llama.cpp と同じです。

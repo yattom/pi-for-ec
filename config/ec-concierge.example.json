@@ -42,7 +42,8 @@
   "//providers": [
     "pi に追加登録するプロバイダ。LAN内の llama.cpp / Ollama / vLLM などをここに書く。",
     "llama.cpp のルーターは pi 本体の /login llama.cpp でも設定できるが、",
-    "ここに書いておくとこの拡張だけで完結し、複数マシンを使い分けられる。"
+    "ここに書いておくとこの拡張だけで完結し、複数マシンを使い分けられる。",
+    "KoboldCpp の設定例は docs/models.md を参照。"
   ],
   "providers": {
     "lan-llama": {
