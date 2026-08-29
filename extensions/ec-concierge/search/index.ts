@@ -12,8 +12,11 @@ import {
 	backendAvailability,
 	backendCandidates,
 	hasConfiguredBackend,
+	resolveSearxngInstances,
 	runBackend,
+	searxngSearchOne,
 } from "./backends.ts";
+import { createSearxngPoolState, type SearxngPoolState } from "./searxng-pool.ts";
 import type { SearchQuery, SearchResult } from "./types.ts";
 
 export type { SearchQuery, SearchResult } from "./types.ts";
@@ -35,7 +38,7 @@ export function searchSetupHint(availability: Record<BackendId, boolean>): strin
 		"  - TAVILY_API_KEY … 無料枠あり・カード不要。最も手軽",
 		"  - SERPER_API_KEY … Google の検索結果。無料枠あり",
 		"  - BRAVE_SEARCH_API_KEY … 品質は高いがカード登録が必要",
-		"  - SEARXNG_BASE_URL … 自前の SearXNG を立てるなら無料",
+		"  - SEARXNG_BASE_URL / search.searxng.instances … SearXNG。複数インスタンスを登録すればローテーションする",
 	].join("\n");
 }
 
@@ -48,6 +51,9 @@ export interface SearchOutcome {
 }
 
 export class WebSearch {
+	/** SearXNG の複数インスタンスをローテーションする状態。セッションを通じて持ち回す。 */
+	private readonly searxngPool: SearxngPoolState = createSearxngPoolState();
+
 	constructor(
 		private readonly http: HttpClient,
 		private readonly getConfig: () => SearchConfig,
@@ -62,12 +68,42 @@ export class WebSearch {
 	/** 指定したバックエンドだけを実行する（フォールバックしない）。/ec-search-test 用。 */
 	async searchWith(backend: BackendId, query: SearchQuery, signal?: AbortSignal): Promise<SearchResult[]> {
 		const config = this.getConfig();
-		return runBackend(backend, query, { http: this.http, config, resolve: this.resolve, signal });
+		return runBackend(backend, query, { http: this.http, config, resolve: this.resolve, signal, searxngPool: this.searxngPool });
+	}
+
+	/**
+	 * 設定されている SearXNG インスタンスを1つずつ（ローテーションを介さず）直接叩き、
+	 * どれが実際に応答するかを調べる。/ec-search-test の内訳表示用。
+	 */
+	async testSearxngInstances(
+		query: SearchQuery,
+		signal?: AbortSignal,
+	): Promise<Array<{ url: string; ok: boolean; count: number; elapsedMs: number; error?: string }>> {
+		const config = this.getConfig();
+		const urls = await resolveSearxngInstances(config.searxng, this.resolve);
+		const deps: BackendDeps = { http: this.http, config, resolve: this.resolve, signal };
+		const results: Array<{ url: string; ok: boolean; count: number; elapsedMs: number; error?: string }> = [];
+		for (const url of urls) {
+			const startedAt = Date.now();
+			try {
+				const items = await searxngSearchOne(url, query, deps);
+				results.push({ url, ok: items.length > 0, count: items.length, elapsedMs: Date.now() - startedAt });
+			} catch (error) {
+				results.push({
+					url,
+					ok: false,
+					count: 0,
+					elapsedMs: Date.now() - startedAt,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+		return results;
 	}
 
 	async search(query: SearchQuery, signal?: AbortSignal): Promise<SearchOutcome> {
 		const config = this.getConfig();
-		const deps: BackendDeps = { http: this.http, config, resolve: this.resolve, signal };
+		const deps: BackendDeps = { http: this.http, config, resolve: this.resolve, signal, searxngPool: this.searxngPool };
 		const availability = await backendAvailability(deps);
 		const candidates = backendCandidates(config.backend, availability);
 		if (candidates.length === 0) {

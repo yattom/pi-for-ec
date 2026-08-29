@@ -70,7 +70,19 @@ export interface SearchConfig {
 	tavily: { endpoint: string; apiKey?: string; searchDepth: "basic" | "advanced"; country?: string };
 	/** Serper（Google の検索結果を返すAPI）。キー必須。 */
 	serper: { endpoint: string; apiKey?: string; gl: string; hl: string };
-	searxng: { baseUrl?: string; language: string; engines?: string };
+	searxng: {
+		/** 単一インスタンス（後方互換用）。instances と併用すると両方が対象になる。 */
+		baseUrl?: string;
+		/**
+		 * 複数インスタンスをローテーションする場合はこちら。自前で複数運用している場合や、
+		 * searx.space の公開インスタンスを何個か試したい場合に使う。各要素は "$ENV" も解決される。
+		 * 注意: 公開インスタンスの多くは JSON 出力（format=json）を無効化しており、
+		 * その場合は自動でクールダウンし、次のインスタンスへ回る。
+		 */
+		instances?: string[];
+		language: string;
+		engines?: string;
+	};
 	/** Google Programmable Search。2025年に新規受付終了、2027-01-01 に廃止予定。 */
 	googleCse: { endpoint: string; apiKey?: string; cx?: string; lr: string; gl: string };
 	duckduckgo: { endpoint: string; region: string };
@@ -165,7 +177,7 @@ export const DEFAULT_CONFIG: EcConciergeConfig = {
 			lr: "lang_ja",
 			gl: "jp",
 		},
-		searxng: { baseUrl: "$SEARXNG_BASE_URL", language: "ja" },
+		searxng: { baseUrl: "$SEARXNG_BASE_URL", instances: [], language: "ja" },
 		duckduckgo: { endpoint: "https://html.duckduckgo.com/html/", region: "jp-jp" },
 	},
 	ec: {

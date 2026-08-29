@@ -74,7 +74,7 @@ Amazon の商品情報を API で取りたい場合は Product Advertising API�
 | 1 | Brave Search API | APIキー（カード登録必須） | 品質は高い。2026年2月に無料枠が終了し、$5/月クレジット（約1,000クエリ）+従量課金 |
 | 2 | **Tavily** | APIキー（無料枠あり・カード不要） | **最も手軽な推奨先。** キー無しでも「キーレスモード」で動く（レート制限あり） |
 | 3 | Serper | APIキー（新規登録に無料枠） | Google の検索結果が返る |
-| 4 | SearXNG | 自前インスタンスのURL | JSON API を有効に。無料で無制限だが自分で運用する |
+| 4 | SearXNG | インスタンスのURL（1つ以上） | 自前が基本。公開インスタンスも使えるが下記の制約に注意 |
 | 5 | Google Programmable Search | APIキー + 検索エンジンID | **新規受付終了・2027年1月1日に廃止。** 既存ユーザーの互換目的でのみ残置 |
 | 6 | DuckDuckGo (HTML) | 不要 | 最後の手段。スクレイピングなのでブロックされやすい |
 
@@ -89,6 +89,73 @@ Amazon の商品情報を API で取りたい場合は Product Advertising API�
 ```bash
 export TAVILY_API_KEY="tvly-..."
 ```
+
+### SearXNG: 自前 vs 公開インスタンス（searx.space）
+
+**searx.space に載っている公開インスタンスも `searxng.baseUrl` / `searxng.instances` に指定できます**
+（ただの URL なので技術的には区別されません）。ただし2点、実用上の注意があります。
+
+**1. 公開インスタンスの多くは JSON 出力を無効にしている。**
+SearXNG は既定で `format=json` を無効化しており、有効にするかは各運営者の判断です。
+JSON/CSV/RSS はブラウザ経由よりずっと安く大量スクレイピングされてしまうため、
+公開インスタンスの運営者の多くはボット対策として無効のままにしています。
+無効なインスタンスに `format=json` を投げると `403 Forbidden` が返ります
+（ブラウザで検索ページを開くと動いて見えるのに、この拡張からは動かないのはこのため）。
+searx.space の一覧にある個々のインスタンスがJSONを有効にしているかは、事前に
+`https://<instance>/search?q=test&format=json` を直接叩いて確認するしかありません。
+
+**2. 自動化されたエージェントのトラフィックを送ってよい場所か。**
+公開インスタンスはボランティアが人間の手動検索のために無償で運営しています。
+このエージェントのような自動化されたクライアントで継続的にリクエストを送ることは、
+多くの運営者が望まない使い方です。**基本方針としては自前でホストするか、
+そもそも API 利用を前提にしている Tavily・Serper・Brave を使うことを推奨します。**
+それでも公開インスタンスを使う場合は、後述のローテーション機能で1つに負荷を集中させず、
+節度あるリクエスト間隔（既定の `http.minIntervalMsPerHost` を上げる）を検討してください。
+
+### SearXNG: 複数インスタンスのローテーション
+
+`searxng.instances` に複数のURLを並べると、この拡張が自動でローテーションします。
+
+```json
+"search": {
+  "backend": "searxng",
+  "searxng": {
+    "instances": [
+      "https://searx.example-self-hosted.net",
+      "https://searx.be",
+      "https://priv.au"
+    ],
+    "language": "ja"
+  }
+}
+```
+
+動き方:
+
+- 生きているインスタンスの中からラウンドロビンで順に選ぶ。
+- リクエストが失敗した（`format=json` 無効の403、タイムアウト等）インスタンスは
+  一時的にクールダウンし、次のインスタンスへ自動で回る。1回の検索の中で
+  全インスタンスを使い切るまで試すので、公開インスタンスのうちどれか1つでも
+  JSONを有効にしていれば検索は成立する。
+- クールダウンは5分から始まり、失敗が続くインスタンスほど倍々に伸びる（上限30分）。
+  一度成功すればクールダウンは解除される。
+- 状態はプロセス（`pi` のセッション）が生きている間だけ保持される。
+
+`/ec-search-test` を実行すると、設定した SearXNG インスタンスを1つずつ直接叩いて
+OK/NG・件数・応答時間を一覧表示します。**どのインスタンスが実際にJSONを返すか確認する
+一番手っ取り早い方法です。**
+
+```
+/ec-search-test 空気清浄機 おすすめ
+■ 検索テスト（クエリ: 空気清浄機 おすすめ）
+- searxng: OK 3件 (420ms) 例: https://my-best.com/aircleaner
+    - https://searx.example-self-hosted.net: OK 3件 (120ms)
+    - https://searx.be: NG HTTP 403: json format is disabled (95ms)
+    - https://priv.au: OK 2件 (610ms)
+```
+
+既存の単一インスタンス設定（`searxng.baseUrl`）はそのまま動きます。`instances` と
+併用した場合は両方が対象になります。
 
 ### Google Programmable Search からの移行
 

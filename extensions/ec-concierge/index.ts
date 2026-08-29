@@ -207,6 +207,16 @@ export default function ecConcierge(pi: ExtensionAPI) {
 				} catch (error) {
 					lines.push(`- ${backend}: NG ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
 				}
+				if (backend === "searxng" && availability.searxng) {
+					const perInstance = await services.search.testSearxngInstances({ query, count: 3, lang: "ja" }, ctx.signal);
+					for (const instance of perInstance) {
+						lines.push(
+							instance.ok
+								? `    - ${instance.url}: OK ${instance.count}件 (${instance.elapsedMs}ms)`
+								: `    - ${instance.url}: NG ${instance.error ?? "結果0件"} (${instance.elapsedMs}ms)`,
+						);
+					}
+				}
 			}
 			if (!hasConfiguredBackend(availability)) lines.push("", searchSetupHint(availability));
 			ctx.ui.notify(lines.join("\n"), "info");

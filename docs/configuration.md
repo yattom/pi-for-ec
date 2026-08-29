@@ -71,7 +71,8 @@ Web検索。**すべて pi の実行マシンから発行されます。**
 | `tavily.country` | 未設定 | `"japan"` などを設定すると地域を絞る |
 | `serper.apiKey` | `"$SERPER_API_KEY"` | Serper のキー |
 | `serper.gl` / `hl` | `jp` / `ja` | Google 検索の地域・言語 |
-| `searxng.baseUrl` | `"$SEARXNG_BASE_URL"` | 自前 SearXNG（JSON API を有効にしておく） |
+| `searxng.baseUrl` | `"$SEARXNG_BASE_URL"` | SearXNG インスタンス1つだけ使う場合（後方互換） |
+| `searxng.instances` | `[]` | SearXNG インスタンスを複数登録してローテーションする場合。各要素は `"$ENV"` も解決される |
 | `googleCse.apiKey` / `cx` | `"$GOOGLE_CSE_API_KEY"` / `"$GOOGLE_CSE_CX"` | Google Programmable Search（新規受付終了・2027-01-01 廃止） |
 | `duckduckgo.region` | `"jp-jp"` | 最後の手段。スクレイピングなのでブロックされやすい |
 

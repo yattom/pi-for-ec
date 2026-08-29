@@ -73,7 +73,7 @@ pi install .
 | **Web検索（推奨）** | `TAVILY_API_KEY` | [Tavily](https://tavily.com/)（無料枠あり・カード不要） | キーレスモードで動くが厳しいレート制限つき |
 | Web検索（代替） | `SERPER_API_KEY` | [Serper](https://serper.dev/)（無料枠あり） | — |
 | Web検索（代替） | `BRAVE_SEARCH_API_KEY` | [Brave Search API](https://brave.com/search/api/)（カード登録必須） | — |
-| Web検索（自前） | `SEARXNG_BASE_URL` | 自前の SearXNG（JSON API を有効に） | — |
+| Web検索（自前） | `SEARXNG_BASE_URL` | 自前の SearXNG（複数登録してローテーションも可。[詳細](docs/data-sources.md)） | — |
 | 楽天市場 | `RAKUTEN_APPLICATION_ID` | [Rakuten Developers](https://webservice.rakuten.co.jp/) （無料） | 楽天は Web検索経由になる |
 | Yahoo!ショッピング | `YAHOO_APP_ID` | [Yahoo!デベロッパーネットワーク](https://developer.yahoo.co.jp/) （無料） | Yahoo!は Web検索経由になる |
 

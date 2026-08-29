@@ -77,7 +77,10 @@
     "Web検索は pi の実行マシンから発行される（LLM実行マシンではない）。",
     "backend: auto なら brave → tavily → serper → searxng → google-cse → duckduckgo の順に、使えるものを試す。",
     "Tavily はキー無しでもキーレスモードで動くが、レート制限が厳しいのでキーの取得を推奨。",
-    "Google Programmable Search は新規受付終了・2027-01-01 廃止のため、新規に選ぶ意味はない。"
+    "Google Programmable Search は新規受付終了・2027-01-01 廃止のため、新規に選ぶ意味はない。",
+    "searxng.instances に複数URLを書くとローテーションする（詳細は docs/data-sources.md）。",
+    "searx.space の公開インスタンスも指定できるが、多くは format=json を無効化しており、",
+    "自動化クライアントでの継続利用は運営者の想定外なので、基本は自前ホストを推奨する。"
   ],
   "search": {
     "backend": "auto",
@@ -85,7 +88,9 @@
     "tavily": { "apiKey": "$TAVILY_API_KEY", "searchDepth": "basic" },
     "serper": { "apiKey": "$SERPER_API_KEY" },
     "brave": { "apiKey": "$BRAVE_SEARCH_API_KEY" },
-    "searxng": { "baseUrl": "http://192.168.1.60:8888" }
+    "searxng": {
+      "instances": ["http://192.168.1.60:8888"]
+    }
   },
 
   "//ec": [

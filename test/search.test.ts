@@ -11,8 +11,10 @@ import {
 	parseDuckDuckGoHtml,
 	parseGoogleCseResponse,
 	parseSearxngResponse,
+	resolveSearxngInstances,
 	unwrapDuckDuckGoRedirect,
 } from "../extensions/ec-concierge/search/backends.ts";
+import { createSearxngPoolState } from "../extensions/ec-concierge/search/searxng-pool.ts";
 import { WebSearch, formatSearchResults } from "../extensions/ec-concierge/search/index.ts";
 import { buildQueryString } from "../extensions/ec-concierge/search/types.ts";
 
@@ -186,6 +188,28 @@ describe("backendCandidates / hasConfiguredBackend", () => {
 	});
 });
 
+describe("resolveSearxngInstances", () => {
+	it("instances と後方互換の baseUrl を両方対象にする", async () => {
+		const urls = await resolveSearxngInstances(
+			{ baseUrl: "https://legacy.example/", instances: ["https://a.example", "https://b.example/"], language: "ja" },
+			async (value) => value,
+		);
+		expect(urls).toEqual(["https://a.example", "https://b.example", "https://legacy.example"]);
+	});
+
+	it("$ENV 形式を個別に解決し、末尾スラッシュを揃え、重複を除く", async () => {
+		const urls = await resolveSearxngInstances(
+			{ instances: ["$SEARX_A", "$SEARX_B", "https://a.example/"], language: "ja" },
+			async (value) => (value === "$SEARX_A" ? "https://a.example" : value === "$SEARX_B" ? "https://b.example" : undefined),
+		);
+		expect(urls).toEqual(["https://a.example", "https://b.example"]);
+	});
+
+	it("何も設定されていなければ空配列", async () => {
+		expect(await resolveSearxngInstances({ language: "ja" }, async () => undefined)).toEqual([]);
+	});
+});
+
 describe("WebSearch", () => {
 	function makeSearch(handler: (url: string) => Response) {
 		const http = new HttpClient({ ...DEFAULT_CONFIG.http, minIntervalMsPerHost: 0 });
@@ -302,6 +326,56 @@ describe("WebSearch", () => {
 		);
 		await expect(searxOnly.search({ query: "テスト" })).rejects.toThrow(/SearXNG/);
 		expect(await search.availability()).toMatchObject({ duckduckgo: true, brave: false });
+	});
+
+	it("SearXNG: 1つのインスタンスが失敗しても次のインスタンスへ回る（公開インスタンスがJSONを無効化していても粘る）", async () => {
+		const attemptedHosts: string[] = [];
+		const http = new HttpClient({ ...DEFAULT_CONFIG.http, minIntervalMsPerHost: 0 });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: string | URL | Request) => {
+				const url = new URL(String(input));
+				attemptedHosts.push(url.host);
+				if (url.host === "dead.example") return new Response("Forbidden", { status: 403 }); // JSON無効化を模す
+				return new Response(JSON.stringify({ results: [{ title: "T", url: "https://kakaku.com/1", content: "c" }] }), {
+					status: 200,
+				});
+			}),
+		);
+		const search = new WebSearch(
+			http,
+			() => ({
+				...DEFAULT_CONFIG.search,
+				backend: "searxng" as const,
+				searxng: { instances: ["https://dead.example", "https://alive.example"], language: "ja" },
+			}),
+			async (value) => value, // リテラルはそのまま通す（実際の resolveSecret の挙動）
+		);
+
+		const outcome = await search.search({ query: "テスト" });
+		expect(outcome.backend).toBe("searxng");
+		expect(outcome.results).toHaveLength(1);
+		expect(attemptedHosts).toEqual(["dead.example", "alive.example"]);
+		vi.unstubAllGlobals();
+	});
+
+	it("SearXNG: すべてのインスタンスが失敗したら理由付きでエラーにする", async () => {
+		const http = new HttpClient({ ...DEFAULT_CONFIG.http, minIntervalMsPerHost: 0 });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("Forbidden", { status: 403 })),
+		);
+		const search = new WebSearch(
+			http,
+			() => ({
+				...DEFAULT_CONFIG.search,
+				backend: "searxng" as const,
+				searxng: { instances: ["https://a.example", "https://b.example"], language: "ja" },
+			}),
+			async (value) => value,
+		);
+		await expect(search.search({ query: "テスト" })).rejects.toThrow(/a\.example.*b\.example|SearXNG インスタンスがすべて失敗/s);
+		vi.unstubAllGlobals();
 	});
 });
 

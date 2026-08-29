@@ -9,6 +9,7 @@
 import type { SearchConfig } from "../config.ts";
 import type { HttpClient } from "../http.ts";
 import { decodeHtmlEntities, htmlToText, stripTrackingParams } from "../util.ts";
+import { createSearxngPoolState, markFailure, markSuccess, pickInstance, type SearxngPoolState } from "./searxng-pool.ts";
 import { buildQueryString, type SearchQuery, type SearchResult } from "./types.ts";
 
 export interface BackendDeps {
@@ -17,6 +18,8 @@ export interface BackendDeps {
 	/** 設定値（"$ENV" など）を解決する関数 */
 	resolve: (value: string | undefined) => Promise<string | undefined>;
 	signal?: AbortSignal;
+	/** SearXNG の複数インスタンスをローテーションする状態。省略時はその呼び出し限りの使い捨てになる。 */
+	searxngPool?: SearxngPoolState;
 }
 
 /* ------------------------------------------------------------------ Brave */
@@ -200,9 +203,23 @@ export function parseSearxngResponse(payload: unknown): SearchResult[] {
 		}));
 }
 
-async function searxngSearch(query: SearchQuery, deps: BackendDeps): Promise<SearchResult[]> {
-	const baseUrl = await deps.resolve(deps.config.searxng.baseUrl);
-	if (!baseUrl) throw new Error("SearXNG の baseUrl が未設定です");
+/**
+ * 設定に書かれた SearXNG インスタンスを解決してURL配列にする。
+ * `instances`（複数）と後方互換の `baseUrl`（単一）の両方を対象にし、重複と末尾スラッシュを整える。
+ */
+export async function resolveSearxngInstances(
+	config: SearchConfig["searxng"],
+	resolve: (value: string | undefined) => Promise<string | undefined>,
+): Promise<string[]> {
+	const raw = [...(config.instances ?? [])];
+	if (config.baseUrl) raw.push(config.baseUrl);
+	const resolved = await Promise.all(raw.map((value) => resolve(value)));
+	const normalized = resolved.filter((value): value is string => Boolean(value)).map((value) => value.replace(/\/+$/, ""));
+	return [...new Set(normalized)];
+}
+
+/** 1つの SearXNG インスタンスに対して検索する。ローテーションの本体はこの関数の呼び出し側が担う。 */
+export async function searxngSearchOne(baseUrl: string, query: SearchQuery, deps: BackendDeps): Promise<SearchResult[]> {
 	const url = new URL("/search", baseUrl);
 	url.searchParams.set("q", buildQueryString(query));
 	url.searchParams.set("format", "json");
@@ -210,6 +227,33 @@ async function searxngSearch(query: SearchQuery, deps: BackendDeps): Promise<Sea
 	if (deps.config.searxng.engines) url.searchParams.set("engines", deps.config.searxng.engines);
 	const payload = await deps.http.fetchJson(url.toString(), { signal: deps.signal });
 	return parseSearxngResponse(payload).slice(0, query.count ?? deps.config.maxResults);
+}
+
+/**
+ * 複数インスタンスをローテーションしながら検索する。
+ * 公開インスタンスは JSON 出力（format=json）を無効化していることが多く、403 などで
+ * 突然使えなくなりがちなので、失敗したインスタンスはクールダウンして次を試す。
+ * すべて失敗したときだけエラーにする（内訳は個別のエラーメッセージとして残す）。
+ */
+async function searxngSearch(query: SearchQuery, deps: BackendDeps): Promise<SearchResult[]> {
+	const urls = await resolveSearxngInstances(deps.config.searxng, deps.resolve);
+	if (urls.length === 0) throw new Error("SearXNG の baseUrl / instances が未設定です");
+
+	const pool = deps.searxngPool ?? createSearxngPoolState();
+	const errors: string[] = [];
+	for (let attempt = 0; attempt < urls.length; attempt++) {
+		const picked = pickInstance(urls, pool);
+		if (!picked) break;
+		try {
+			const results = await searxngSearchOne(picked.url, query, deps);
+			markSuccess(pool, picked.url);
+			return results;
+		} catch (error) {
+			markFailure(pool, picked.url);
+			errors.push(`${picked.url}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	throw new Error(`SearXNG インスタンスがすべて失敗しました (${errors.join(" / ")})`);
 }
 
 /* ------------------------------------------------------------- DuckDuckGo */
@@ -292,18 +336,18 @@ const BACKENDS: Record<BackendId, (query: SearchQuery, deps: BackendDeps) => Pro
 
 /** 各バックエンドが使える状態か（資格情報が揃っているか）を調べる。 */
 export async function backendAvailability(deps: BackendDeps): Promise<Record<BackendId, boolean>> {
-	const [braveKey, serperKey, googleKey, googleCx, searxngUrl] = await Promise.all([
+	const [braveKey, serperKey, googleKey, googleCx, searxngUrls] = await Promise.all([
 		deps.resolve(deps.config.brave.apiKey),
 		deps.resolve(deps.config.serper.apiKey),
 		deps.resolve(deps.config.googleCse.apiKey),
 		deps.resolve(deps.config.googleCse.cx),
-		deps.resolve(deps.config.searxng.baseUrl),
+		resolveSearxngInstances(deps.config.searxng, deps.resolve),
 	]);
 	return {
 		brave: Boolean(braveKey),
 		tavily: true, // キーが無くてもキーレスモードで動く（レート制限あり）
 		serper: Boolean(serperKey),
-		searxng: Boolean(searxngUrl),
+		searxng: searxngUrls.length > 0,
 		"google-cse": Boolean(googleKey && googleCx),
 		duckduckgo: true, // キー不要。ただしスクレイピングでベストエフォート
 	};
