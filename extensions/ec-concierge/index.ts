@@ -3,12 +3,18 @@
  *
  * - ツール: ask_user / web_search / web_fetch / ec_search / review_research /
  *           requirements / candidates / rank_candidates / recommend
- * - コマンド: /ec-models /ec-config /ec-search-test /ec-status /ec-reload
+ * - コマンド: /kaimono /hikaku /ec-on /ec-off
+ *             /ec-models /ec-config /ec-search-test /ec-status /ec-reload
  *
  * 設計メモ:
  *  - Web検索とページ取得は pi 実行マシンから発行する（LLM 側の検索機能は使わない）。
  *  - 下働きの推論（抽出・要約・翻訳・採点）は用途別に別モデルへ振り分けられる。
  *    設定は ~/.pi/agent/ec-concierge.json の models セクション。
+ *  - この拡張は `pi install` すると全プロジェクトの `pi` 起動時に読み込まれる。
+ *    そのため、明示的に有効化するまでツールもシステムプロンプトも一切有効にしない
+ *    （activation: "manual"、既定）。有効化されない限り、素の `pi` は普段どおり動く。
+ *    有効化する方法は3つ: /kaimono・/hikaku コマンド / 明示的な /ec-on /
+ *    ランチャー（bin/ec-concierge.mjs、PI_EC_ACTIVATE=1 を設定して起動）。
  */
 
 import { readFileSync } from "node:fs";
@@ -38,6 +44,23 @@ import { formatCandidates, formatRequirements } from "./state.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+/** このツール群が有効化されるまで（activation: "manual"）非表示にするツール名。 */
+export const CONCIERGE_TOOL_NAMES = [
+	"ask_user",
+	"web_search",
+	"web_fetch",
+	"ec_search",
+	"review_research",
+	"requirements",
+	"candidates",
+	"rank_candidates",
+	"recommend",
+] as const;
+
+/** 有効化状態をセッションに残すための custom entry の種別。 */
+const ACTIVATED_ENTRY_TYPE = "ec-concierge-activated";
+const DEACTIVATED_ENTRY_TYPE = "ec-concierge-deactivated";
+
 /** コンシェルジュのシステムプロンプト（assets/system-concierge.md）。 */
 export function loadPersonaPrompt(): string {
 	try {
@@ -47,9 +70,67 @@ export function loadPersonaPrompt(): string {
 	}
 }
 
+/** ランチャー（bin/ec-concierge.mjs）または設定で、起動時から有効化するよう指示されているか。 */
+export function isActivationForced(
+	config: { activation: "manual" | "always" },
+	env: NodeJS.ProcessEnv = process.env,
+): boolean {
+	return config.activation === "always" || env.PI_EC_ACTIVATE === "1";
+}
+
+/**
+ * セッションの現在のブランチを遡り、直近の活性化/非活性化イベントから状態を復元する。
+ * `/fork` や `/tree` で分岐しても、その枝で最後に選ばれた状態に従う。
+ */
+export function wasActivatedInBranch(entries: readonly { type: string; customType?: string }[]): boolean {
+	let activated = false;
+	for (const entry of entries) {
+		if (entry.type !== "custom") continue;
+		if (entry.customType === ACTIVATED_ENTRY_TYPE) activated = true;
+		else if (entry.customType === DEACTIVATED_ENTRY_TYPE) activated = false;
+	}
+	return activated;
+}
+
+function buildKaimonoPrompt(args: string): string {
+	const request = args.trim() || "（まだ言語化できていないので、まず何を聞けばいいか提案してください）";
+	return [
+		`買い物の相談です: ${request}`,
+		"",
+		"`ec-shopping` スキルの手順に従って、コンシェルジュとして進めてください。",
+		"",
+		"1. まず相談内容を1〜2文で要約し、`requirements(update)` に記録する",
+		"2. 足りない情報を `ask_user` で1問ずつ確認する（一度に複数聞かない）",
+		"3. `ec_search` と `review_research` で候補と評価を調べる",
+		"4. `rank_candidates` で絞り込み、最後に `recommend` でおすすめリストを提示する",
+		"",
+		"価格・スペックは必ずツールで確認した情報だけを使い、出典URLを添えてください。",
+	].join("\n");
+}
+
+function buildHikakuPrompt(args: string): string {
+	const request = args.trim() || "（比較したい商品名を教えてください）";
+	return [
+		`次の商品を比較してください: ${request}`,
+		"",
+		"進め方:",
+		"",
+		"1. それぞれの実売価格を `ec_search` で確認し、`candidates(upsert)` に登録する",
+		"2. それぞれについて `review_research` で独立レビューを調べ、良い点と悪い点を集める",
+		"3. 仕様が曖昧な点はメーカーページを `web_fetch` で確認する",
+		"4. 比較表（価格 / 主要スペック / 良い点 / 注意点）を提示し、",
+		"   「どういう人にはどれ」という形で結論を出す",
+		"5. ユーザーの用途がまだ分からなければ、比較の前に `ask_user` で1問確認する",
+		"",
+		"最後は `recommend` で、おすすめ順に理由・価格・購入リンクを付けて提示してください。",
+	].join("\n");
+}
+
 export default function ecConcierge(pi: ExtensionAPI) {
 	const services = new Services();
 	let personaPrompt: string | undefined;
+	/** このプロセス（セッション）内でコンシェルジュが有効化されているか。 */
+	let activated = false;
 
 	/** プロバイダ登録に失敗した理由（/ec-config で表示する） */
 	const providerErrors: Array<{ name: string; message: string }> = [];
@@ -82,14 +163,38 @@ export default function ecConcierge(pi: ExtensionAPI) {
 	pi.registerTool(createRankTool(services));
 	pi.registerTool(createRecommendTool(services));
 
+	/** アクティブなツール集合から、コンシェルジュのツールを外す/加える。 */
+	const setToolsActivated = (active: boolean) => {
+		const current = pi.getActiveTools();
+		const withoutOurs = current.filter((name) => !(CONCIERGE_TOOL_NAMES as readonly string[]).includes(name));
+		pi.setActiveTools(active ? [...new Set([...withoutOurs, ...CONCIERGE_TOOL_NAMES])] : withoutOurs);
+	};
+
+	/** コンシェルジュを有効化する。/kaimono 等からも呼ばれる。 */
+	const activate = (ctx: { hasUI: boolean; ui: Pick<ExtensionContext["ui"], "notify" | "setStatus"> }, notify: boolean) => {
+		if (activated) return;
+		activated = true;
+		setToolsActivated(true);
+		pi.appendEntry(ACTIVATED_ENTRY_TYPE);
+		updateStatus(services, ctx as ExtensionContext, activated);
+		if (notify && ctx.hasUI) {
+			ctx.ui.notify("ECショッピング・コンシェルジュを有効化しました（このセッションのみ）。/ec-off で戻せます。", "info");
+		}
+	};
+
 	// ------------------------------------------------------------ ライフサイクル
 	pi.on("session_start", async (_event, ctx) => {
 		reload(ctx);
 		restoreState(services, ctx);
-		updateStatus(services, ctx);
+		activated = isActivationForced(services.getConfig()) || wasActivatedInBranch(ctx.sessionManager.getBranch());
+		setToolsActivated(activated);
+		updateStatus(services, ctx, activated);
 	});
 
 	pi.on("before_agent_start", async (event) => {
+		// 有効化されていないセッションでは、システムプロンプトに一切触れない。
+		// これが「素の pi を起動しても買い物コンシェルジュにならない」ための核心部分。
+		if (!activated) return;
 		const persona = services.getConfig().persona;
 		if (persona === "off") return;
 		if (persona === "auto" && event.systemPromptOptions?.customPrompt) return;
@@ -103,6 +208,48 @@ export default function ecConcierge(pi: ExtensionAPI) {
 	});
 
 	// -------------------------------------------------------------- コマンド
+	pi.registerCommand("kaimono", {
+		description: "買い物の相談を始める（商品名・カテゴリー・困りごとのいずれでもOK）。コンシェルジュを有効化する",
+		handler: async (args, ctx) => {
+			activate(ctx, false);
+			await pi.sendUserMessage(buildKaimonoPrompt(args));
+		},
+	});
+
+	pi.registerCommand("hikaku", {
+		description: "特定の商品どうしを比較する。コンシェルジュを有効化する",
+		handler: async (args, ctx) => {
+			activate(ctx, false);
+			await pi.sendUserMessage(buildHikakuPrompt(args));
+		},
+	});
+
+	pi.registerCommand("ec-on", {
+		description: "ECショッピング・コンシェルジュを有効化する（ツールとシステムプロンプトが有効になる）",
+		handler: async (_args, ctx) => {
+			if (activated) {
+				ctx.ui.notify("すでに有効化されています。", "info");
+				return;
+			}
+			activate(ctx, true);
+		},
+	});
+
+	pi.registerCommand("ec-off", {
+		description: "ECショッピング・コンシェルジュを無効化し、素の pi に戻す",
+		handler: async (_args, ctx) => {
+			if (!activated) {
+				ctx.ui.notify("有効化されていません。", "info");
+				return;
+			}
+			activated = false;
+			setToolsActivated(false);
+			pi.appendEntry(DEACTIVATED_ENTRY_TYPE);
+			updateStatus(services, ctx, activated);
+			if (ctx.hasUI) ctx.ui.notify("ECショッピング・コンシェルジュを無効化しました。", "info");
+		},
+	});
+
 	pi.registerCommand("ec-models", {
 		description: "用途（ロール）別のモデル割り当てを表示・変更する",
 		handler: async (args, ctx) => {
@@ -120,7 +267,7 @@ export default function ecConcierge(pi: ExtensionAPI) {
 				const config = services.getConfig();
 				config.models[roleArg as RoleName] = { ...config.models[roleArg as RoleName], ...parsed };
 				ctx.ui.notify(`${roleArg} → ${refArg}（このセッションのみ。永続化は ec-concierge.json へ）`, "info");
-				updateStatus(services, ctx);
+				updateStatus(services, ctx, activated);
 				return;
 			}
 
@@ -153,6 +300,10 @@ export default function ecConcierge(pi: ExtensionAPI) {
 				: ["- (設定ファイルなし。既定値で動作中)"];
 			ctx.ui.notify(
 				[
+					"■ 有効化",
+					`- このセッション: ${activated ? "有効" : "無効（/kaimono・/hikaku・/ec-on で有効化）"}`,
+					`- 設定: activation = "${config.activation}"${config.activation === "manual" ? "（既定。明示的に有効化するまでツール・システムプロンプトは無効）" : "（常に有効）"}`,
+					"",
 					"■ 読み込んだ設定ファイル",
 					...sources,
 					"",
@@ -238,15 +389,22 @@ export default function ecConcierge(pi: ExtensionAPI) {
 		description: "ECコンシェルジュの設定ファイルを再読み込みする",
 		handler: async (_args, ctx) => {
 			reload(ctx);
-			updateStatus(services, ctx);
+			updateStatus(services, ctx, activated);
 			ctx.ui.notify("ec-concierge の設定を再読み込みしました", "info");
 		},
 	});
 }
 
-/** フッターに現在のロール割り当てを出す。 */
-function updateStatus(services: Services, ctx: ExtensionContext): void {
+/**
+ * フッターに現在のロール割り当てを出す。
+ * 有効化されていないセッションでは、無関係な pi 利用にノイズを出さないよう何も表示しない。
+ */
+function updateStatus(services: Services, ctx: ExtensionContext, activated: boolean): void {
 	if (!ctx.hasUI) return;
+	if (!activated) {
+		ctx.ui.setStatus("ec-concierge", undefined);
+		return;
+	}
 	const resolved = services.roles.describe(ctx);
 	const extract = resolved.find((entry) => entry.role === "extract")?.effective ?? "-";
 	const review = resolved.find((entry) => entry.role === "review")?.effective ?? "-";

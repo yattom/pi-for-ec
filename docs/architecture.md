@@ -3,17 +3,23 @@
 ## pi の上でどう作られているか
 
 pi は「read / write / edit / bash の4ツールと短いシステムプロンプト」だけを核に持ち、
-それ以外は TypeScript の拡張（extension）、スキル、プロンプトテンプレートで足す設計です。
-このリポジトリは pi パッケージとして、次の3種類の資源を提供します。
+それ以外は TypeScript の拡張（extension）とスキルで足す設計です。
+このリポジトリは pi パッケージとして、次の資源を提供します。
 
 | 資源 | 場所 | 役割 |
 |---|---|---|
-| 拡張 | `extensions/ec-concierge/` | 買い物用のツール9個とコマンド4個を登録する |
+| 拡張 | `extensions/ec-concierge/` | 買い物用のツール9個とコマンド9個（`/kaimono` `/hikaku` `/ec-on` `/ec-off` 含む）を登録する |
 | スキル | `skills/ec-shopping/` | コンシェルジュの進め方（手順書）。必要になったときだけ読み込まれる |
-| プロンプトテンプレート | `prompts/` | `/kaimono` `/hikaku` の入口 |
-| システムプロンプト | `assets/system-concierge.md` | ランチャーが `--system-prompt` で渡す。拡張からも追記できる |
+| システムプロンプト | `assets/system-concierge.md` | ランチャーが `--system-prompt` で渡す。有効化されたセッションでは拡張からも追記される |
 
 `package.json` の `pi` フィールドでこれらを宣言しているので、`pi install` するだけで全部読み込まれます。
+つまりこの拡張は**インストールした時点で全プロジェクトの `pi` 起動時にロードされます**。
+それでも素の `pi` の挙動を変えないよう、既定では非活性（`activation: "manual"`）です。
+有効化されるまでは、ツールは `pi.setActiveTools()` で非表示にされ、システムプロンプトの追記も
+行われません。詳しくは [configuration.md の「activation について」](configuration.md#activation-について) を参照してください。
+
+`/kaimono` と `/hikaku` は、以前は独立したプロンプトテンプレート（`prompts/*.md`）でしたが、
+有効化のフックが必要なため拡張のコマンド（`pi.registerCommand` + `pi.sendUserMessage`）に統合しました。
 
 ## 処理の流れ
 

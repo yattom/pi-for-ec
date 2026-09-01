@@ -136,12 +136,21 @@ export interface EcConciergeConfig {
 	/** 最終提案の Markdown を書き出すディレクトリ（cwd からの相対可） */
 	outputDir: string;
 	/**
-	 * コンシェルジュ用のシステムプロンプトの扱い。
+	 * コンシェルジュ用のシステムプロンプトの扱い（有効化されているセッションでのみ意味を持つ。
+	 * activation を参照）。
 	 *   auto  : --system-prompt などで独自プロンプトが指定されていなければ追記する（既定）
 	 *   always: 常に追記する
 	 *   off   : 何もしない（ツールだけ使う）
 	 */
 	persona: "auto" | "always" | "off";
+	/**
+	 * コンシェルジュを有効化するタイミング。
+	 *   manual: 既定。/kaimono・/hikaku・/ec-on を実行するか、ランチャー（PI_EC_ACTIVATE=1）
+	 *           経由で起動するまでは、ツールもシステムプロンプトも一切有効にしない。
+	 *           これにより、素の `pi` を起動したときに買い物コンシェルジュへ切り替わらない。
+	 *   always: 常に有効（従来の挙動）。この拡張だけを使う専用環境で pi を動かす場合向け。
+	 */
+	activation: "manual" | "always";
 	/** ページ本文がこの文字数を超えたら extract ロールのモデルで要約する */
 	summarizeThresholdChars: number;
 }
@@ -231,6 +240,7 @@ export const DEFAULT_CONFIG: EcConciergeConfig = {
 	},
 	outputDir: "output",
 	persona: "auto",
+	activation: "manual",
 	summarizeThresholdChars: 6000,
 };
 

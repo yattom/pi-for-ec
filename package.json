@@ -7,13 +7,12 @@
   "keywords": ["pi-package", "ec", "shopping", "concierge", "japanese"],
   "pi": {
     "extensions": ["./extensions/ec-concierge/index.ts"],
-    "skills": ["./skills"],
-    "prompts": ["./prompts"]
+    "skills": ["./skills"]
   },
   "bin": {
     "ec-concierge": "./bin/ec-concierge.mjs"
   },
-  "files": ["extensions", "skills", "prompts", "assets", "bin", "config", "docs", "README.md"],
+  "files": ["extensions", "skills", "assets", "bin", "config", "docs", "README.md"],
   "scripts": {
     "test": "vitest --run",
     "test:watch": "vitest",

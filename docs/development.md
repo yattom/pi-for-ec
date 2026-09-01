@@ -30,8 +30,10 @@ npm run typecheck  # tsc --noEmit
 | `test/rank-recommend.test.ts` | 採点結果のJSON解析、提案Markdownの生成 |
 | `test/reviews.test.ts` | レビュー検索クエリ、取得先の分散 |
 | `test/roles.test.ts` | 用途別モデルの解決とフォールバック |
-| `test/extension.test.ts` | ツール/コマンド登録、システムプロンプト追記、対話ツール |
+| `test/extension.test.ts` | ツール/コマンド登録、有効化ゲーティング（activation）、システムプロンプト追記、対話ツール |
 | `test/web-tools.test.ts` | web_fetch の要約経路と robots.txt 拒否 |
+| `test/searxng-pool.test.ts` | SearXNG 複数インスタンスのローテーションとクールダウン |
+| `test/launcher.test.ts` | ランチャー（bin/ec-concierge.mjs）の pi 解決と引数組み立て |
 
 ## 手元で pi と一緒に動かす
 

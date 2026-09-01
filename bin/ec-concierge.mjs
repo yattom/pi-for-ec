@@ -7,6 +7,8 @@
  *   - この拡張とスキルを読み込む
  *   - 既定では組み込みツール（bash/edit/write 等）を無効にする（買い物に不要なため）
  *   - 設定ファイルの models.concierge をメインモデルとして --model に渡す
+ *   - PI_EC_ACTIVATE=1 を設定して起動する。拡張は既定で非活性（activation: "manual"）
+ *     なので、このランチャーを介さず素の `pi` を起動した場合は買い物モードにならない。
  *
  * 使い方:
  *   node bin/ec-concierge.mjs "在宅勤務用の椅子がほしい"
@@ -181,10 +183,13 @@ function main() {
 		multilineArgs,
 	});
 
+	// この拡張は既定で非活性（activation: "manual"）。ランチャー経由の起動は
+	// 明示的な「買い物モードで使う」という意思表示なので、ここで強制的に有効化する。
+	const spawnEnv = { ...process.env, PI_EC_ACTIVATE: "1" };
 	const child =
 		invocation.kind === "node"
-			? spawn(process.execPath, [invocation.entry, ...args], { stdio: "inherit" })
-			: spawn(invocation.command, args, { stdio: "inherit", shell: invocation.shell });
+			? spawn(process.execPath, [invocation.entry, ...args], { stdio: "inherit", env: spawnEnv })
+			: spawn(invocation.command, args, { stdio: "inherit", shell: invocation.shell, env: spawnEnv });
 
 	child.on("error", (error) => {
 		if (error.code === "ENOENT") {

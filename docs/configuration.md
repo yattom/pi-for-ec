@@ -138,8 +138,27 @@ Tavily と DuckDuckGo はキー無しでも候補に入るため、何も設定�
 | 項目 | 既定 | 説明 |
 |---|---|---|
 | `outputDir` | `"output"` | `recommend` が Markdown を書き出す先（cwd からの相対可） |
-| `persona` | `"auto"` | `auto`: 独自システムプロンプトが無ければコンシェルジュ指示を追記 / `always`: 常に追記 / `off`: 何もしない |
+| `activation` | `"manual"` | `manual`: `/kaimono` `/hikaku` `/ec-on` を実行するか、ランチャー（`PI_EC_ACTIVATE=1`）経由で起動するまで、ツール・システムプロンプトの両方を無効化しておく（既定）。`always`: 常に有効（この拡張専用の環境向け） |
+| `persona` | `"auto"` | **有効化されているセッションでのみ意味を持つ。** `auto`: 独自システムプロンプトが無ければコンシェルジュ指示を追記 / `always`: 常に追記 / `off`: 何もしない |
 | `summarizeThresholdChars` | `6000` | ページ本文がこの文字数を超えたら `extract` ロールで要約する |
+
+### `activation` について
+
+この拡張は `pi install` すると全プロジェクトの `pi` 起動時に読み込まれます（pi パッケージの仕様）。
+`activation: "manual"`（既定）は、それが「素の `pi` を買い物コンシェルジュに変えてしまう」ことがないよう
+にするための設定です。有効化されるまでは:
+
+- コンシェルジュの9個のツール（`ask_user` / `web_search` / … / `recommend`）は
+  `pi.setActiveTools()` により非アクティブになり、モデルから呼び出せない
+- `before_agent_start` でのシステムプロンプト追記も行われない（`persona` 設定に関わらず）
+
+有効化は `/kaimono` `/hikaku` `/ec-on` のいずれかを実行するか、ランチャー
+（`bin/ec-concierge.mjs`、内部で `PI_EC_ACTIVATE=1` を設定する）経由で起動することで行われます。
+有効化の状態はセッション内の custom entry として記録されるため、`/fork` や `/tree` で分岐しても
+その枝で最後に選ばれた状態（有効 / `/ec-off` で無効）を引き継ぎます。
+
+この拡張専用の環境（コンテナ、専用の pi 設定ディレクトリなど）で常に買い物コンシェルジュとして
+使いたい場合だけ `activation: "always"` にしてください。
 
 ## 環境変数
 
